@@ -1,9 +1,11 @@
-"""The static-version guard.
+"""The static-version guard, and the PEP 621 version-declaration predicates.
 
 Reads `pyproject.toml` at the git root and refuses a bump while `[project]
 version` is static, unless `[tool.bump-version] allow-static-version = true`
-(docs/DECISIONS.md 003). May import: `output`, `exit_status`, `git` (git
-root).
+(docs/DECISIONS.md 003). `_declares_static_version` and
+`_declares_dynamic_version` are the one definition of what a `[project]`
+table's version declaration means, shared with the dynamic-pyproject
+migration. May import: `output`, `exit_status`, `git` (git root).
 """
 
 from __future__ import annotations
@@ -47,6 +49,16 @@ def _parse_pyproject(text: str, path: str) -> dict:
         sys.exit(EXIT_FAILURE)
 
 
+def _declares_static_version(project: dict) -> bool:
+    """True when a [project] table pins a literal version (PEP 621 static)."""
+    return "version" in project and "version" not in project.get("dynamic", [])
+
+
+def _declares_dynamic_version(project: dict) -> bool:
+    """True when a [project] table leaves version to the build backend (PEP 621 dynamic)."""
+    return "version" not in project and "version" in project.get("dynamic", [])
+
+
 def _check_pyproject_version() -> None:
     """Refuse to bump when pyproject.toml pins a static [project] version.
 
@@ -58,9 +70,7 @@ def _check_pyproject_version() -> None:
     if pyproject is None:
         return
     project = pyproject.get("project")
-    if not isinstance(project, dict) or "version" not in project:
-        return
-    if "version" in project.get("dynamic", []):
+    if not isinstance(project, dict) or not _declares_static_version(project):
         return
 
     tool = pyproject.get("tool")

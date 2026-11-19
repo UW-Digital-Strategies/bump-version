@@ -10,13 +10,16 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from types import FrameType
 
 import pytest
 
+from bump_version import prompts
 from bump_version.exit_status import EXIT_DECLINED, EXIT_FAILURE, EXIT_INTERRUPTED, EXIT_OK
-from bump_version.prompts import _build_editor_seed, _create_tag_via_editor, _SCISSORS_LINE
+from bump_version.prompts import _SCISSORS_LINE, _build_editor_seed, _create_tag_via_editor
 
 
 def _fake_editor(tmp_path, body: str, name: str = "fake-editor") -> str:
@@ -26,14 +29,14 @@ def _fake_editor(tmp_path, body: str, name: str = "fake-editor") -> str:
     real editor does.
     """
     script = tmp_path / name
-    script.write_text("#!/bin/sh\n" + body)
+    script.write_text("#!/bin/sh\n" + body, encoding="utf-8")
     script.chmod(0o755)
     return str(script)
 
 
 def _commit(path, name: str, text: str) -> None:
     """Write a file into the repo and commit it."""
-    (path / name).write_text(text)
+    (path / name).write_text(text, encoding="utf-8")
     subprocess.run(["git", "add", name], check=True, capture_output=True)
     subprocess.run(["git", "commit", "-m", f"Add {name}"], check=True, capture_output=True)
 
@@ -43,7 +46,7 @@ def _tag_message(tag: str) -> str:
     result = subprocess.run(
         ["git", "tag", "-l", "--format=%(contents)", tag],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=True,
     )
     return result.stdout
@@ -101,7 +104,7 @@ class TestCreateTagViaEditor:
 
         assert _create_tag_via_editor("v1.0.0", "Release v1.0.0") == EXIT_OK
         assert _tag_message("v1.0.0").strip() == "Hand written\n\nBody line"
-        # git removes its own buffer once the tag is created.
+        # the tool removes its seeded buffer once the tag is created.
         assert not _tag_editmsg(git_repo).exists()
 
     def test_editor_sees_seed_and_unedited_seed_strips_to_default(self, git_repo, monkeypatch):
@@ -114,7 +117,7 @@ class TestCreateTagViaEditor:
 
         assert _create_tag_via_editor("v1.0.0", "Release v1.0.0", prev_tag="v0.9.0") == EXIT_OK
 
-        seen = (git_repo / "seen-seed.txt").read_text()
+        seen = (git_repo / "seen-seed.txt").read_text(encoding="utf-8")
         assert _SCISSORS_LINE in seen
         assert "feature.txt" in seen
         assert _tag_message("v1.0.0").strip() == "Release v1.0.0"
@@ -128,7 +131,7 @@ class TestCreateTagViaEditor:
         monkeypatch.setenv("EDITOR", f"{editor} --wait")
 
         assert _create_tag_via_editor("v1.0.0", "Release v1.0.0") == EXIT_OK
-        assert (git_repo / "arg.txt").read_text().strip() == "--wait"
+        assert (git_repo / "arg.txt").read_text(encoding="utf-8").strip() == "--wait"
         assert _tag_message("v1.0.0").strip() == "Via args"
 
     def test_empty_message_aborts_and_keeps_buffer(self, git_repo, monkeypatch, capsys):
@@ -177,6 +180,29 @@ class TestCreateTagViaEditor:
         assert _tag_message("v1.0.0").strip() == "first"
 
 
+@pytest.mark.parametrize(
+    ("existing_tag", "expected_status"),
+    [(False, EXIT_OK), (True, EXIT_FAILURE)],
+    ids=["tag-created", "tag-failed"],
+)
+def test_cleaned_message_tempfile_removed(
+    git_repo, tmp_path, monkeypatch, existing_tag, expected_status
+):
+    """The stripped message reaches git via a tempfile that never outlives the call."""
+    if existing_tag:
+        subprocess.run(
+            ["git", "tag", "-a", "-m", "first", "v1.0.0"], check=True, capture_output=True
+        )
+    msg_dir = tmp_path / "msg-tmp"
+    msg_dir.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(msg_dir))
+    editor = _fake_editor(git_repo, 'printf "From the editor\\n" > "$1"\n')
+    monkeypatch.setenv("EDITOR", editor)
+
+    assert _create_tag_via_editor("v1.0.0", "Release v1.0.0") == expected_status
+    assert list(msg_dir.iterdir()) == []
+
+
 @pytest.mark.parametrize("prev_tag", [None, "v0.9.0"])
 def test_editor_buffer_lives_in_git_dir(git_repo, monkeypatch, prev_tag):
     """TAG_EDITMSG must sit in the git dir so editor modes auto-activate."""
@@ -187,25 +213,34 @@ def test_editor_buffer_lives_in_git_dir(git_repo, monkeypatch, prev_tag):
 
     _create_tag_via_editor("v1.0.0", "Release v1.0.0", prev_tag=prev_tag)
 
-    seen = (git_repo / "seen-path.txt").read_text().strip()
+    seen = (git_repo / "seen-path.txt").read_text(encoding="utf-8").strip()
     assert seen == str(_tag_editmsg(git_repo))
 
 
 # The signals bump-version ignores while the editor runs, as git's editor.c
-# does. SIGQUIT is POSIX-only.
-_EDITOR_SIGNALS = [signal.SIGINT] + ([signal.SIGQUIT] if hasattr(signal, "SIGQUIT") else [])
+# does. SIGQUIT does not exist on Windows. Written out independently of
+# `prompts._EDITOR_SIGNALS` so the tests below catch a signal dropped there.
+_EDITOR_SIGNALS = [signal.SIGINT] + ([signal.SIGQUIT] if sys.platform != "win32" else [])
+
+
+def test_editor_signals_match_git_editor_set() -> None:
+    assert tuple(_EDITOR_SIGNALS) == prompts._EDITOR_SIGNALS
+
+
+_Handler = Callable[[int, FrameType | None], None]
 
 
 @pytest.fixture()
-def sentinel_handlers() -> Iterator[dict[int, object]]:
+def sentinel_handlers() -> Iterator[dict[signal.Signals, _Handler]]:
     """Install a recognisable Python handler per editor signal; undo it after.
 
     Restoring "whatever was there before" is only provable against a handler
     that is neither SIG_DFL nor SIG_IGN nor Python's default_int_handler.
     """
 
-    def _make(signum: int):
-        def _handler(_signum, _frame) -> None:  # pragma: no cover - never delivered
+    def _make(signum: int) -> _Handler:
+        # Never delivered: the tests only compare the installed handlers.
+        def _handler(_signum: int, _frame: FrameType | None) -> None:  # pragma: no cover
             pytest.fail(f"sentinel handler for {signum} ran")
 
         return _handler
@@ -369,12 +404,12 @@ def test_ctrl_c_during_editor_end_to_end(git_repo, editor_body, expected_status,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
         encoding="utf-8",
         start_new_session=True,
     )
     try:
         # No sync; compose in $EDITOR; no push.
+        assert proc.stdin is not None  # stdin=PIPE above
         proc.stdin.write("n\n3\nn\n")
         proc.stdin.flush()
         deadline = time.monotonic() + 30

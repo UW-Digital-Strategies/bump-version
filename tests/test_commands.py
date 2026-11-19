@@ -1,6 +1,8 @@
 """Tests for command functions and interactive helpers."""
 
+import os
 import subprocess
+import sys
 
 import pytest
 
@@ -8,8 +10,8 @@ from bump_version.cli import _cmd_bump, _cmd_current, _show_changes_since_versio
 from bump_version.git import _create_tag, _get_default_remote, _get_remotes, _push_tag, _sync_repo
 from bump_version.output import _print_error, _print_info, _print_success, _print_warning
 from bump_version.prompts import (
-    _EditorRequest,
     _edit_summary,
+    _EditorRequest,
     _prompt_bump_type,
     _prompt_message,
     _prompt_yes_no,
@@ -80,6 +82,13 @@ class TestGetRemotes:
         remotes = _get_remotes()
         assert remotes == []
 
+    def test_outside_a_repo_raises(self, tmp_path, monkeypatch):
+        """A failed `git remote` raises rather than reading as "no remotes"."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+        with pytest.raises(subprocess.CalledProcessError):
+            _get_remotes()
+
 
 class TestSyncRepo:
     """Tests for _sync_repo."""
@@ -99,7 +108,7 @@ class TestShowChangesSinceVersion:
 
     def test_shows_changes_since_tag(self, git_repo, capsys):
         _create_tag("v1.0.0", "v1.0.0")
-        (git_repo / "new.txt").write_text("new")
+        (git_repo / "new.txt").write_text("new", encoding="utf-8")
         subprocess.run(["git", "add", "."], check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "New feature"],
@@ -319,6 +328,28 @@ class TestMain:
             main(["patch", "--dry-run", "-y"])
         assert exc_info.value.code == 0
 
+    def test_non_ascii_output_under_latin1_streams(self, git_repo):
+        """A Latin-1 stream encoding cannot crash the run.
+
+        PYTHONIOENCODING stands in for a non-UTF-8 locale portably: macOS and
+        modern CPython coerce LC_ALL=C to UTF-8, and hosts differ in which
+        real Latin-1 locales they ship.
+        """
+        subprocess.run(["git", "tag", "v0.1.0"], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "한국어 커밋"],
+            check=True,
+            capture_output=True,
+        )
+        result = subprocess.run(
+            [sys.executable, "-m", "bump_version.cli", "patch", "--dry-run", "-y"],
+            check=False,
+            capture_output=True,
+            env={**os.environ, "PYTHONIOENCODING": "latin-1", "NO_COLOR": "1"},
+        )
+        assert result.returncode == 0, result.stderr.decode("utf-8")
+        assert "  • 한국어 커밋".encode() in result.stdout
+
     @pytest.fixture()
     def route(self, git_repo, monkeypatch):
         """Run main() with _cmd_bump stubbed; return the one (args, bump_type) it got."""
@@ -376,7 +407,7 @@ class TestCmdBump:
 
     def test_bump_patch_dry_run(self, git_repo, capsys, bump_args):
         _create_tag("v1.0.0", "Initial")
-        (git_repo / "fix.txt").write_text("fix")
+        (git_repo / "fix.txt").write_text("fix", encoding="utf-8")
         subprocess.run(["git", "add", "."], check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Bug fix"],
@@ -405,7 +436,7 @@ class TestCmdBump:
 
     def test_bump_with_custom_message(self, git_repo, capsys, bump_args):
         _create_tag("v1.0.0", "Initial")
-        (git_repo / "feature.txt").write_text("feature")
+        (git_repo / "feature.txt").write_text("feature", encoding="utf-8")
         subprocess.run(["git", "add", "."], check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Add feature"],
@@ -418,7 +449,7 @@ class TestCmdBump:
 
     def test_bump_with_sync_no_remote(self, git_repo, capsys, bump_args):
         """Sync flag with no remote should warn but continue."""
-        (git_repo / "f.txt").write_text("f")
+        (git_repo / "f.txt").write_text("f", encoding="utf-8")
         subprocess.run(["git", "add", "."], check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Commit"],
@@ -431,7 +462,7 @@ class TestCmdBump:
 
     def test_bump_creates_tag(self, git_repo, capsys, bump_args):
         """Non-dry-run actually creates the tag."""
-        (git_repo / "f.txt").write_text("f")
+        (git_repo / "f.txt").write_text("f", encoding="utf-8")
         subprocess.run(["git", "add", "."], check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Feature"],
@@ -445,7 +476,7 @@ class TestCmdBump:
         check = subprocess.run(
             ["git", "tag", "-l", "v1.0.0"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             check=False,
         )
         assert "v1.0.0" in check.stdout

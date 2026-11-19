@@ -9,6 +9,7 @@ package, so every other module may import it.
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 from typing import TextIO
@@ -38,6 +39,21 @@ class Color:
         if cls.enabled(stream):
             return f"{color}{text}{cls.RESET}"
         return text
+
+
+def _use_utf8_streams() -> None:
+    """
+    Write stdout and stderr as UTF-8 whatever the host locale says.
+
+    Commit subjects, tag messages and the `•` bullet reach these streams, and
+    an inherited non-UTF-8 encoding (a Latin-1 or ASCII locale, or
+    `PYTHONIOENCODING`) raises `UnicodeEncodeError` on the first character it
+    cannot represent. A stream that is not a `TextIOWrapper` (a test's
+    `StringIO`) has no byte encoding to set, so it is left as it is.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
 
 
 def _emit(message: str, color: str, stream: TextIO) -> None:

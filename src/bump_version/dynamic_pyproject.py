@@ -5,7 +5,8 @@ The `_dynpp_*` steps and the constants they write move a static hatchling
 validated by re-parsing; every refusal happens before the first write.
 `_cmd_dynamic_pyproject` runs the steps in order. May import: `output`,
 `exit_status`, `git`, `version` (the drift check), `prompts`
-(`_prompt_yes_no`), `pyproject` (the shared parse-or-exit).
+(`_prompt_yes_no`), `pyproject` (the shared parse-or-exit and the dynamic
+version predicate).
 """
 
 from __future__ import annotations
@@ -22,10 +23,10 @@ from bump_version.exit_status import EXIT_DECLINED, EXIT_FAILURE, EXIT_OK
 from bump_version.git import _get_git_root, _run_git
 from bump_version.output import _print_error, _print_info, _print_success, _print_warning
 from bump_version.prompts import _prompt_yes_no
-from bump_version.pyproject import _parse_pyproject
+from bump_version.pyproject import _declares_dynamic_version, _parse_pyproject
 from bump_version.version import _get_current_version
 
-# The exact archival content PYTHON.md §16 prescribes: enough commit metadata
+# The exact archival content hatch-vcs documents: enough commit metadata
 # for hatch-vcs to resolve a version from a `git archive` tarball.
 _GIT_ARCHIVAL_CONTENT = (
     "node: $Format:%H$\n"
@@ -66,7 +67,7 @@ def _dynpp_preconditions(root: str) -> tuple[str, dict]:
     if not isinstance(project, dict):
         _print_error("Error: pyproject.toml has no [project] table")
         sys.exit(EXIT_FAILURE)
-    if "version" not in project and "version" in project.get("dynamic", []):
+    if _declares_dynamic_version(project):
         _print_success("pyproject.toml already uses dynamic versioning; nothing to do")
         sys.exit(EXIT_OK)
 
@@ -78,7 +79,7 @@ def _dynpp_preconditions(root: str) -> tuple[str, dict]:
         _print_error("Error: [project] has no version key to convert")
         sys.exit(EXIT_FAILURE)
 
-    dirty = _run_git("status", "--porcelain", "--", *_MIGRATION_FILES, check=False)
+    dirty = _run_git("status", "--porcelain", "--", *_MIGRATION_FILES)
     if dirty.stdout.strip():
         _print_error(
             "Error: uncommitted changes in "
@@ -193,8 +194,7 @@ def _dynpp_validate(new_text: str) -> None:
     project = parsed.get("project", {})
     hatch_version = parsed.get("tool", {}).get("hatch", {}).get("version", {}).get("source")
     ok = (
-        "version" not in project
-        and "version" in project.get("dynamic", [])
+        _declares_dynamic_version(project)
         and "hatch-vcs" in parsed.get("build-system", {}).get("requires", [])
         and hatch_version == "vcs"
     )
@@ -237,7 +237,7 @@ def _dynpp_write_archival_files(root: str) -> None:
 
 def _dynpp_warn_hardcoded_versions(root: str) -> None:
     """Warn (never rewrite) about hardcoded __version__ literals in code."""
-    result = _run_git("ls-files", "--full-name", "--", root, check=False)
+    result = _run_git("ls-files", "--full-name", "--", root)
     pattern = re.compile(r"__version__\s*=\s*[\"']\d")
     hits = []
     for name in result.stdout.splitlines():
@@ -290,7 +290,7 @@ def _dynpp_offer_commit(root: str, args: argparse.Namespace) -> int:
             _print_info("Not committed; review and commit when ready")
             return EXIT_OK
     paths = [os.path.join(root, name) for name in _MIGRATION_FILES]
-    add = _run_git("add", "--", *paths, check=False)
+    add = _run_git("add", "--", *paths)
     if add.returncode != 0:
         _print_error(f"Failed to stage migration files: {add.stderr}")
         return EXIT_FAILURE
@@ -301,7 +301,6 @@ def _dynpp_offer_commit(root: str, args: argparse.Namespace) -> int:
         "Switch to dynamic versioning via hatch-vcs",
         "--",
         *paths,
-        check=False,
     )
     if commit.returncode != 0:
         _print_error(f"Failed to commit migration: {commit.stderr}")

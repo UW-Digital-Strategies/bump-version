@@ -44,7 +44,10 @@ stream, testing the tty status of *that* stream. `_print_info` (blue), `_print_s
 stderr. A non-empty `NO_COLOR` turns color off even on a terminal (an empty
 one does not), per no-color.org. Color never carries meaning alone — every
 line says its status in words. Plain `print()` is still used directly for menus, commit listings and
-the `current` result.
+the `current` result. `main` calls `_use_utf8_streams` first, which sets
+stdout and stderr to UTF-8 whatever the host locale says, so a commit subject
+or the `•` bullet cannot raise `UnicodeEncodeError` on a Latin-1 or ASCII
+stream.
 
 ### Exit statuses (`exit_status`)
 
@@ -156,6 +159,19 @@ release flow below, decomposed into `_maybe_sync`,
 `_show_changes_since_version`, `_resolve_message_and_create_tag` (with
 `_resolve_tag_message` choosing the message source) and `_maybe_push`.
 
+### Shell completion (`completion`)
+
+`render_bash` turns `_create_parser()` into a static bash completion script:
+subcommands at the top level, then each one's options, with nothing offered
+after a value-taking option. No runtime code reads it. `make completions`
+writes `completions/bump-version.bash` through `main` (which sets UTF-8
+streams first, as `cli.main` does), the wheel installs that
+file as shared data under `share/bash-completion/completions/`, and
+`tests/test_completion.py` fails when it drifts from the parser. It reads
+argparse's private `_actions`, at generate and test time only. Static rather
+than argcomplete because the CLI has no runtime dependencies and no dynamic
+values.
+
 ### How the components depend on each other
 
 Imports run one way, so there are no import cycles. A module imports only
@@ -171,6 +187,7 @@ from the modules its row names:
 | `pyproject`         | `output`, `exit_status`, `git` (git root)                                                                  |
 | `dynamic_pyproject` | `output`, `exit_status`, `git`, `version` (drift check), `prompts` (`_prompt_yes_no`), `pyproject` (parse) |
 | `cli`               | all of the above, plus `__version__` from the package                                                      |
+| `completion`        | `output` (`_use_utf8_streams`), `cli` (`_create_parser`); nothing imports it                               |
 
 Re-derive the real edges with `grep -n '^from bump_version' src/bump_version/*.py`.
 A new import that is not in its module's row either belongs in the table, if

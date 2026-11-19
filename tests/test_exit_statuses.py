@@ -55,18 +55,20 @@ def _run(argv: list[str]) -> int:
     """Run main() and return the status it exits with."""
     with pytest.raises(SystemExit) as exc_info:
         main(argv)
-    return exc_info.value.code
+    code = exc_info.value.code
+    assert isinstance(code, int), f"main() exited with non-int status {code!r}"
+    return code
 
 
 def _tags() -> str:
     return subprocess.run(
-        ["git", "tag", "-l"], capture_output=True, text=True, check=True
+        ["git", "tag", "-l"], capture_output=True, encoding="utf-8", check=True
     ).stdout.strip()
 
 
 def _porcelain() -> str:
     return subprocess.run(
-        ["git", "status", "--porcelain"], capture_output=True, text=True, check=True
+        ["git", "status", "--porcelain"], capture_output=True, encoding="utf-8", check=True
     ).stdout.strip()
 
 
@@ -88,7 +90,7 @@ class TestBumpDeclines:
 
     def test_empty_editor_buffer_declines(self, git_repo, operator, monkeypatch, tmp_path_factory):
         editor = tmp_path_factory.mktemp("bin") / "empty-editor"
-        editor.write_text('#!/bin/sh\n: > "$1"\n')
+        editor.write_text('#!/bin/sh\n: > "$1"\n', encoding="utf-8")
         editor.chmod(0o755)
         monkeypatch.setenv("EDITOR", str(editor))
         # sync? no / message: edit in $EDITOR
@@ -99,7 +101,7 @@ class TestBumpDeclines:
 
     def test_failing_editor_is_a_failure(self, git_repo, operator, monkeypatch, tmp_path_factory):
         editor = tmp_path_factory.mktemp("bin") / "failing-editor"
-        editor.write_text("#!/bin/sh\nexit 1\n")
+        editor.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         editor.chmod(0o755)
         monkeypatch.setenv("EDITOR", str(editor))
         operator("n", "3")

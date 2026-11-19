@@ -24,8 +24,17 @@ class TestRunGit:
         those tests while mojibaking on a machine running under LANG=C.
         """
         with patch("subprocess.run") as run:
-            _run_git("rev-parse", "--git-dir", check=False)
+            _run_git("rev-parse", "--git-dir")
         assert run.call_args.kwargs["encoding"] == "utf-8"
+
+    def test_nonzero_exit_is_returned_not_raised(self, tmp_path, monkeypatch):
+        """A failing git command comes back as a CompletedProcess, captured."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+        result = _run_git("rev-parse", "--git-dir")
+        assert result.returncode != 0
+        assert result.stdout == ""
+        assert result.stderr
 
 
 class TestIsGitRepo:
@@ -62,7 +71,7 @@ class TestGetVersionTags:
             capture_output=True,
         )
         # Add another commit for a new tag
-        (git_repo / "file.txt").write_text("content")
+        (git_repo / "file.txt").write_text("content", encoding="utf-8")
         subprocess.run(["git", "add", "."], check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Second"], check=True, capture_output=True)
         subprocess.run(
@@ -109,7 +118,7 @@ class TestGetCurrentVersion:
             check=True,
             capture_output=True,
         )
-        (git_repo / "a.txt").write_text("a")
+        (git_repo / "a.txt").write_text("a", encoding="utf-8")
         subprocess.run(["git", "add", "."], check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "add a"], check=True, capture_output=True)
         subprocess.run(
@@ -130,7 +139,7 @@ class TestGetCommitsSinceTag:
             check=True,
             capture_output=True,
         )
-        (git_repo / "b.txt").write_text("b")
+        (git_repo / "b.txt").write_text("b", encoding="utf-8")
         subprocess.run(["git", "add", "."], check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Add feature B"],
@@ -148,7 +157,7 @@ class TestGetCommitsSinceTag:
             check=True,
             capture_output=True,
         )
-        (git_repo / "c.txt").write_text("c")
+        (git_repo / "c.txt").write_text("c", encoding="utf-8")
         subprocess.run(["git", "add", "."], check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "한국어 소장품 내보내기"],
@@ -182,7 +191,7 @@ class TestCreateTag:
         check = subprocess.run(
             ["git", "tag", "-l", "v1.0.0"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             check=False,
         )
         assert "v1.0.0" in check.stdout
@@ -193,7 +202,7 @@ class TestCreateTag:
         check = subprocess.run(
             ["git", "tag", "-l", "v1.0.0"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             check=False,
         )
         assert "v1.0.0" not in check.stdout

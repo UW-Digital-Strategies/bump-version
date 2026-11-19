@@ -14,13 +14,13 @@ import subprocess
 from bump_version.output import _print_error, _print_info, _print_success, _print_warning
 
 
-def _run_git(
-    *args: str, check: bool = True, capture: bool = True
-) -> subprocess.CompletedProcess[str]:
+def _run_git(*args: str) -> subprocess.CompletedProcess[str]:
     """
     Run a git command safely.
 
     Uses subprocess with a list of arguments to avoid shell injection.
+    Output is always captured and a nonzero exit never raises: each caller
+    reads `returncode` and decides what a failure means for it.
 
     `encoding` is named rather than left to `text=True`, which decodes with
     the locale default: git's own commit-encoding default is UTF-8, so a tag
@@ -30,21 +30,22 @@ def _run_git(
     cmd = ["git", *args]
     return subprocess.run(
         cmd,
-        capture_output=capture,
+        capture_output=True,
         encoding="utf-8",
-        check=check,
+        check=False,
     )
 
 
 def _is_git_repo() -> bool:
     """Check if the current directory is a git repository."""
-    result = _run_git("rev-parse", "--git-dir", check=False)
+    result = _run_git("rev-parse", "--git-dir")
     return result.returncode == 0
 
 
 def _get_remotes() -> list[str]:
     """Get list of configured remotes."""
     result = _run_git("remote")
+    result.check_returncode()
     return [r.strip() for r in result.stdout.strip().split("\n") if r.strip()]
 
 
@@ -58,7 +59,7 @@ def _get_default_remote() -> str | None:
 
 def _get_current_branch() -> str | None:
     """Get the current branch name, or None if detached HEAD."""
-    result = _run_git("symbolic-ref", "--short", "HEAD", check=False)
+    result = _run_git("symbolic-ref", "--short", "HEAD")
     if result.returncode == 0:
         return result.stdout.strip()
     return None
@@ -75,7 +76,7 @@ def _sync_repo() -> None:
 
     # Fetch all tags
     _print_info(f"Fetching tags from {remote}...")
-    result = _run_git("fetch", remote, "--tags", check=False)
+    result = _run_git("fetch", remote, "--tags")
     if result.returncode == 0:
         _print_success("Tags fetched successfully")
     else:
@@ -85,7 +86,7 @@ def _sync_repo() -> None:
     branch = _get_current_branch()
     if branch:
         _print_info(f"Pulling latest changes for branch '{branch}'...")
-        result = _run_git("pull", remote, branch, check=False)
+        result = _run_git("pull", remote, branch)
         if result.returncode == 0:
             _print_success("Branch updated successfully")
         else:
@@ -101,10 +102,10 @@ def _get_commits_since_tag(tag: str | None) -> list[str]:
     """
     if tag:
         # Get commits from tag to HEAD
-        result = _run_git("log", f"{tag}..HEAD", "--pretty=format:%s", check=False)
+        result = _run_git("log", f"{tag}..HEAD", "--pretty=format:%s")
     else:
         # No tag, get all commits
-        result = _run_git("log", "--pretty=format:%s", check=False)
+        result = _run_git("log", "--pretty=format:%s")
 
     if result.returncode != 0 or not result.stdout.strip():
         return []
@@ -118,7 +119,7 @@ def _get_git_dir() -> str:
     Uses `git rev-parse --absolute-git-dir` so worktrees, submodules, and
     non-default `.git` locations all resolve to the right place.
     """
-    result = _run_git("rev-parse", "--absolute-git-dir", check=False)
+    result = _run_git("rev-parse", "--absolute-git-dir")
     if result.returncode != 0:
         raise RuntimeError("Could not locate git directory: " + (result.stderr or "").strip())
     return result.stdout.strip()
@@ -126,7 +127,7 @@ def _get_git_dir() -> str:
 
 def _get_git_root() -> str:
     """Return the absolute path to the repository's working-tree root."""
-    result = _run_git("rev-parse", "--show-toplevel", check=False)
+    result = _run_git("rev-parse", "--show-toplevel")
     if result.returncode != 0:
         raise RuntimeError("Could not locate git root: " + (result.stderr or "").strip())
     return result.stdout.strip()
@@ -140,7 +141,7 @@ def _create_tag(tag: str, message: str, *, dry_run: bool = False) -> bool:
         return True
 
     _print_info(f"Creating tag '{tag}'...")
-    result = _run_git("tag", "-a", tag, "-m", message, check=False)
+    result = _run_git("tag", "-a", tag, "-m", message)
 
     if result.returncode == 0:
         _print_success(f"Tag '{tag}' created successfully")
@@ -162,7 +163,7 @@ def _push_tag(tag: str, *, dry_run: bool = False) -> bool:
         return True
 
     _print_info(f"Pushing tag '{tag}' to {remote}...")
-    result = _run_git("push", remote, tag, check=False)
+    result = _run_git("push", remote, tag)
 
     if result.returncode == 0:
         _print_success("Tag pushed successfully")

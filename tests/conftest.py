@@ -34,7 +34,7 @@ def git_repo(tmp_path, monkeypatch):
         capture_output=True,
     )
     # Create initial commit
-    (tmp_path / "README.md").write_text("# test")
+    (tmp_path / "README.md").write_text("# test", encoding="utf-8")
     subprocess.run(["git", "add", "."], check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "Initial commit"],
@@ -50,7 +50,7 @@ def write_pyproject(git_repo):
 
     def _write(content: str = STATIC_HATCHLING_PYPROJECT):
         path = git_repo / "pyproject.toml"
-        path.write_text(content)
+        path.write_text(content, encoding="utf-8")
         subprocess.run(["git", "add", "pyproject.toml"], check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Add pyproject.toml"],

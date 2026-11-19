@@ -17,8 +17,9 @@ import readline
 import shlex
 import signal
 import subprocess
+import sys
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 
 from bump_version.exit_status import EXIT_DECLINED, EXIT_FAILURE, EXIT_OK
@@ -170,7 +171,7 @@ def _build_editor_seed(default_message: str, prev_tag: str | None) -> str:
     """
     if not prev_tag:
         return default_message
-    diff = _run_git("diff", f"{prev_tag}..HEAD", check=False)
+    diff = _run_git("diff", f"{prev_tag}..HEAD")
     if diff.returncode != 0 or not diff.stdout:
         return default_message
     return (
@@ -205,14 +206,15 @@ def _strip_editor_content(content: str) -> str:
 
 
 # What a terminal sends the whole foreground process group on Ctrl-C and
-# Ctrl-\. SIGQUIT does not exist on Windows.
+# Ctrl-\. SIGQUIT does not exist on Windows; `sys.platform` is the check
+# type checkers narrow, so the attribute is only touched where it exists.
 _EDITOR_SIGNALS: tuple[signal.Signals, ...] = (signal.SIGINT,) + (
-    (signal.SIGQUIT,) if hasattr(signal, "SIGQUIT") else ()
+    (signal.SIGQUIT,) if sys.platform != "win32" else ()
 )
 
 
 @contextlib.contextmanager
-def _editor_signals_ignored() -> Iterator[Callable[[], None]]:
+def _editor_signals_ignored() -> Generator[Callable[[], None], None, None]:
     """Ignore Ctrl-C and Ctrl-\\ in bump-version while `$EDITOR` runs.
 
     A terminal delivers Ctrl-C to the whole foreground process group, so the
@@ -275,17 +277,11 @@ def _create_tag_via_editor(
     Owning the loop lets us cut scissors content and abort on empty input.
 
     Returns an exit status. Emptying the buffer is the operator's way to
-    decline, so it is EXIT_DECLINED; a nonzero editor exit stays
-    EXIT_FAILURE, as it does in git, because a crash and a deliberate `:cq`
-    look the same from here.
+    decline, so it is EXIT_DECLINED; editor failure is `_run_tag_editor`'s
+    status, and tag creation is `_tag_from_message`'s.
 
-    Ctrl-C while the editor runs is the editor's to handle
-    (`_editor_signals_ignored`). If the editor dies of SIGINT or SIGQUIT,
-    that is an interrupt, not an editor failure: this raises
-    KeyboardInterrupt for `cli.main` to exit EXIT_INTERRUPTED, as git
-    re-raises the editor's signal on itself.
-
-    On success, `git tag -a` cleans up `TAG_EDITMSG` itself. On editor
+    On success this function removes `TAG_EDITMSG` (git does not: `-F` bypasses
+    its own editor buffer). On editor
     failure or empty-message abort, the file is left in place so the user
     can recover their pre-strip edit on the next run — matches what git
     does for its own tag editing flow.
@@ -295,12 +291,46 @@ def _create_tag_via_editor(
         _print_info(f"[DRY RUN] Default message: {default_message}")
         return EXIT_OK
 
-    editor = _get_editor()
     tag_editmsg = os.path.join(_get_git_dir(), "TAG_EDITMSG")
 
     with open(tag_editmsg, "w", encoding="utf-8") as f:
         f.write(_build_editor_seed(default_message, prev_tag))
 
+    status = _run_tag_editor(tag, tag_editmsg)
+    if status != EXIT_OK:
+        return status
+
+    with open(tag_editmsg, encoding="utf-8") as f:
+        message = _strip_editor_content(f.read())
+
+    if not message:
+        _print_warning("Empty message; aborting tag creation")
+        return EXIT_DECLINED
+
+    status = _tag_from_message(tag, message)
+    if status == EXIT_OK:
+        # `git tag -F` never touches TAG_EDITMSG (git only manages it when it
+        # runs the editor itself), so the buffer we seeded is ours to remove.
+        # On failure it stays so the user can recover their edit.
+        with contextlib.suppress(OSError):
+            os.unlink(tag_editmsg)
+    return status
+
+
+def _run_tag_editor(tag: str, tag_editmsg: str) -> int:
+    """Run $EDITOR on `tag_editmsg` and return an exit status.
+
+    A nonzero editor exit is EXIT_FAILURE, as it is in git, because a crash
+    and a deliberate `:cq` look the same from here; a missing editor is
+    EXIT_FAILURE too.
+
+    Ctrl-C while the editor runs is the editor's to handle
+    (`_editor_signals_ignored`). If the editor dies of SIGINT or SIGQUIT,
+    that is an interrupt, not an editor failure: this raises
+    KeyboardInterrupt for `cli.main` to exit EXIT_INTERRUPTED, as git
+    re-raises the editor's signal on itself.
+    """
+    editor = _get_editor()
     _print_info(f"Opening {editor} to create tag '{tag}'...")
     try:
         with _editor_signals_ignored() as restore_in_child:
@@ -323,16 +353,17 @@ def _create_tag_via_editor(
     if edit.returncode != 0:
         _print_warning(f"Editor exited with code {edit.returncode}; aborting tag creation")
         return EXIT_FAILURE
+    return EXIT_OK
 
-    with open(tag_editmsg, encoding="utf-8") as f:
-        message = _strip_editor_content(f.read())
 
-    if not message:
-        _print_warning("Empty message; aborting tag creation")
-        return EXIT_DECLINED
+def _tag_from_message(tag: str, message: str) -> int:
+    """Create annotated tag `tag` from the cleaned `message`; return an exit status.
 
-    # Pass the cleaned message via a separate tempfile so TAG_EDITMSG keeps
-    # the user's pre-strip edits (matches git's recovery semantics).
+    The message goes via a separate tempfile, not back into TAG_EDITMSG, so
+    TAG_EDITMSG keeps the user's pre-strip edits (matches git's recovery
+    semantics). `--cleanup=verbatim` because the message is already
+    stripped. The tempfile is removed whatever git does.
+    """
     with tempfile.NamedTemporaryFile(
         mode="w",
         prefix="bump-version-",
@@ -344,7 +375,7 @@ def _create_tag_via_editor(
         msg_path = f.name
     try:
         _print_info(f"Creating tag '{tag}'...")
-        result = _run_git("tag", "-a", "-F", msg_path, "--cleanup=verbatim", tag, check=False)
+        result = _run_git("tag", "-a", "-F", msg_path, "--cleanup=verbatim", tag)
         if result.returncode == 0:
             _print_success(f"Tag '{tag}' created successfully")
             return EXIT_OK

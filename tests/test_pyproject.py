@@ -5,7 +5,12 @@ import argparse
 import pytest
 
 from bump_version.cli import _cmd_bump
-from bump_version.pyproject import _check_pyproject_version, _read_pyproject
+from bump_version.pyproject import (
+    _check_pyproject_version,
+    _declares_dynamic_version,
+    _declares_static_version,
+    _read_pyproject,
+)
 from bump_version.version import BumpType
 
 
@@ -24,6 +29,26 @@ def _make_args(**kwargs) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+class TestVersionDeclarationPredicates:
+    """The PEP 621 static/dynamic predicates shared by the guard and the migration."""
+
+    @pytest.mark.parametrize(
+        ("project", "static", "dynamic"),
+        [
+            ({"version": "1.0.0"}, True, False),
+            ({"version": "1.0.0", "dynamic": ["readme"]}, True, False),
+            ({"dynamic": ["version"]}, False, True),
+            ({"dynamic": ["readme"]}, False, False),
+            ({}, False, False),
+            # Invalid under PEP 621 (both declared): neither predicate claims it.
+            ({"version": "1.0.0", "dynamic": ["version"]}, False, False),
+        ],
+    )
+    def test_predicates(self, project, static, dynamic):
+        assert _declares_static_version(project) is static
+        assert _declares_dynamic_version(project) is dynamic
+
+
 class TestReadPyproject:
     """Tests for _read_pyproject."""
 
@@ -33,6 +58,7 @@ class TestReadPyproject:
     def test_parses_pyproject(self, write_pyproject):
         write_pyproject()
         data = _read_pyproject()
+        assert data is not None
         assert data["project"]["version"] == "1.2.3"
 
     def test_found_from_subdirectory(self, git_repo, write_pyproject, monkeypatch):
@@ -41,10 +67,11 @@ class TestReadPyproject:
         subdir.mkdir(parents=True)
         monkeypatch.chdir(subdir)
         data = _read_pyproject()
+        assert data is not None
         assert data["project"]["version"] == "1.2.3"
 
     def test_malformed_toml_fails_fast(self, git_repo, capsys):
-        (git_repo / "pyproject.toml").write_text("[project\nversion = ")
+        (git_repo / "pyproject.toml").write_text("[project\nversion = ", encoding="utf-8")
         with pytest.raises(SystemExit) as exc_info:
             _read_pyproject()
         assert exc_info.value.code == 1

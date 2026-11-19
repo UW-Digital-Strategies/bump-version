@@ -13,13 +13,13 @@ A command-line utility for managing semantic version tags in Git repositories.
 Run directly without installation:
 
 ```bash
-uvx --from git+https://github.com/borwickatuw/bump-version bump-version
+uvx --from git+https://github.com/UW-Digital-Strategies/bump-version bump-version
 ```
 
 Or clone and run locally:
 
 ```bash
-git clone https://github.com/borwickatuw/bump-version.git
+git clone https://github.com/UW-Digital-Strategies/bump-version.git
 cd bump-version
 uv run bump-version --help
 ```
@@ -27,14 +27,36 @@ uv run bump-version --help
 ### Install globally with uv
 
 ```bash
-uv tool install git+https://github.com/borwickatuw/bump-version
+uv tool install git+https://github.com/UW-Digital-Strategies/bump-version
 ```
 
 ### Install with pip
 
 ```bash
-pip install git+https://github.com/borwickatuw/bump-version
+pip install git+https://github.com/UW-Digital-Strategies/bump-version
 ```
+
+### Shell completion
+
+An install gets bash Tab completion of subcommands and options, with nothing
+to add to your profile. The wheel installs
+`share/bash-completion/completions/bump-version.bash` beside its `bin/`, and
+bash-completion 2.x finds it there by following the `bump-version` command.
+Open a new shell after installing. A `uvx` run gets no completion: the
+command bash sees is `uvx`.
+
+### Updating
+
+Each release is a new tagged commit on the repository above. `uvx` resolves
+that commit on every run, so it needs no update step. An installed copy stays
+on the release it was installed from until you upgrade it:
+
+```bash
+uv tool upgrade bump-version
+pip install --upgrade git+https://github.com/UW-Digital-Strategies/bump-version
+```
+
+`bump-version --version` prints the release you are running.
 
 ## Usage
 
@@ -282,17 +304,20 @@ dynamic = ["version"]
 
 ```bash
 # Clone the repository
-git clone https://github.com/borwickatuw/bump-version.git
+git clone https://github.com/UW-Digital-Strategies/bump-version.git
 cd bump-version
 
 # Install development dependencies
 uv sync --group dev
 
 # Run tests
-uv run pytest
+make test
 
-# Run linting
-uv run ruff check src/
+# Run linting and type checks (ruff + pyright)
+make lint
+
+# Run every gate
+make check
 ```
 
 ## Starting Fresh
@@ -306,3 +331,11 @@ If your repository has no existing version tags, `bump-version` will start from 
 ## License
 
 BSD 3-Clause License - see [LICENSE](LICENSE) for details.
+
+The installed tool carries no third-party code: `pyproject.toml` declares
+`dependencies = []`, so the shipped closure is this package alone
+(`uv tree --no-default-groups` lists nothing beneath it). Third-party licenses
+reach only the dev and test groups, which never ship; there, the one copyleft
+string is dulwich's `Apache-2.0 OR GPL-2.0-or-later`, taken under the
+Apache-2.0 arm. Re-derive the full survey with
+`uv run --with pip-licenses pip-licenses`.

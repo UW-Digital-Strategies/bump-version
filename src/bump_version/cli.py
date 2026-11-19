@@ -23,7 +23,13 @@ from bump_version.git import (
     _push_tag,
     _sync_repo,
 )
-from bump_version.output import _print_error, _print_info, _print_success, _print_warning
+from bump_version.output import (
+    _print_error,
+    _print_info,
+    _print_success,
+    _print_warning,
+    _use_utf8_streams,
+)
 from bump_version.prompts import (
     _create_tag_via_editor,
     _EditorRequest,
@@ -351,6 +357,7 @@ def _dispatch(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> NoReturn:
     """Main entry point."""
+    _use_utf8_streams()
     parser = _create_parser()
     args = parser.parse_args(argv)
 

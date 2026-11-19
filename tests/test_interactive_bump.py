@@ -63,7 +63,7 @@ def _tags_in(bare) -> str:
     result = subprocess.run(
         ["git", "--git-dir", str(bare), "tag", "-l"],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=True,
     )
     return result.stdout
@@ -222,7 +222,7 @@ class TestConfirmBeforeTagging:
         message = subprocess.run(
             ["git", "tag", "-l", "--format=%(contents)", "v1.0.0"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             check=True,
         ).stdout
         assert "Changes:" in message

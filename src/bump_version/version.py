@@ -54,7 +54,7 @@ def _get_version_tags(prefix: str = "v") -> list[str]:
     # Build pattern based on prefix
     pattern = f"{prefix}[0-9]*.[0-9]*.[0-9]*" if prefix else "[0-9]*.[0-9]*.[0-9]*"
 
-    result = _run_git("tag", "-l", pattern, check=False)
+    result = _run_git("tag", "-l", pattern)
     if result.returncode != 0:
         return []
 
