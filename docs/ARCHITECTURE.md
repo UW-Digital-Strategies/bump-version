@@ -232,8 +232,7 @@ component section above.
 
 ## Data structures
 
-Small repo, so these live here rather than in `docs/data-structures/`
-(DOCS Practice 2).
+Small repo, so these live here rather than in `docs/data-structures/`.
 
 **`Version`** (`version`) — a dataclass of `major`, `minor`, `patch` (ints)
 and `prefix` (default `"v"`, `""` allowed). `str(version)` *is* the tag name,
